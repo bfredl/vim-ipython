@@ -97,10 +97,12 @@ try:
     km
     kc
     pid
+    ipy_ft
 except NameError:
     km = None
     kc = None
     pid = None
+    ipy_ft = None
 
 _install_instructions = """You *must* install IPython into the Python that
 your vim is linked against. If you are seeing this message, this usually means
@@ -138,7 +140,7 @@ def km_from_string(s=''):
             # < 0.12, no find_connection_file
             pass
         
-    global km, kc, send, Empty
+    global km, kc, send, Empty, ipy_ft
 
     s = s.replace('--existing', '')
     if 'connection_file' in KernelManager.class_trait_names():
@@ -220,6 +222,7 @@ def km_from_string(s=''):
             set bexpr=IPythonBalloonExpr()
         endif
         """)
+    set_ft()
     set_pid()
     return km
 
@@ -312,7 +315,8 @@ def get_doc_buffer(level=0):
         vim.command('setlocal syntax=rst')
     else:
         # use Python syntax highlighting
-        vim.command('setlocal syntax=python')
+        if ipy_ft is not None:
+            vim.command('setlocal syntax={}'.format(ipy_ft))
 
 def vim_ipython_is_open():
     """
@@ -364,7 +368,9 @@ def update_subchannel_msgs(debug=False, force=False):
             vim.command("wincmd P") #switch to preview window
             # subchannel window quick quit key 'q'
             vim.command('nnoremap <buffer> q :q<CR>')
-            vim.command("set bufhidden=hide buftype=nofile ft=python")
+            vim.command("set bufhidden=hide buftype=nofile")
+            if ipy_ft is not None:
+                vim.command("set ft={}".format(ipy_ft))
             vim.command("setlocal nobuflisted") # don't come up in buffer lists
             vim.command("setlocal nonumber") # no line numbers, we have in/out nums
             vim.command("setlocal noswapfile") # no swap file (so no complaints cross-instance)
@@ -554,13 +560,44 @@ def run_these_lines(dedent=False):
     prompt = "lines %d-%d "% (r.start+1,r.end+1)
     print_prompt(prompt,msg_id)
 
+def set_ft():
+    """
+    Query the language of the kernel
+    """
+    global ipy_ft
+
+    msg_id = kc.shell_channel.kernel_info()
+    # wait to get message back from kernel
+    try:
+        child = get_child_msg(msg_id)
+    except Empty:
+        echo("no reply from IPython kernel")
+        return
+
+    try:
+        ipy_ft = child['content']['language']
+    except KeyError: # change in IPython 1.0.dev moved this out
+        echo("Could not determine language of kernel")
+        return
 
 def set_pid():
     """
     Explicitly ask the ipython kernel for its pid
     """
     global pid
-    lines = '\n'.join(['import os', '_pid = os.getpid()'])
+
+    #Temporary hack: we should factor out all language specific stuff
+    pidstmt = {
+        'python': '\n'.join(['import os', '_pid = os.getpid()']),
+        'julia': '_pid = getpid()'
+        }
+    try:
+        lines = pidstmt[ipy_ft]
+    except KeyError:
+        if ipy_ft is not None:
+            echo("cannot determine pid of {} kernel".format(ipy_ft))
+        return
+
     msg_id = send(lines, silent=True, user_variables=['_pid'])
 
     # wait to get message back from kernel
